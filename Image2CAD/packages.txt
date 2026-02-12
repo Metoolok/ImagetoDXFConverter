@@ -1,2 +1,3 @@
 potrace
 inkscape
+libpotrace-dev
