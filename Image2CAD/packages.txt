@@ -1,3 +1,0 @@
-potrace
-libpotrace-dev
-inkscape
