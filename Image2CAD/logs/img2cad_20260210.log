@@ -1,0 +1,28 @@
+[2026-02-10 13:28:20] INFO     [img2cad.__init__:44] Using default configuration
+[2026-02-10 13:44:05] INFO     [img2cad.__init__:44] Using default configuration
+[2026-02-10 13:44:05] ERROR    [img2cad.convert_single:114] Conversion error:
+Traceback (most recent call last):
+  File "/home/metin-mert-turan/PycharmProjects/PythonProject2/Image2CAD/main.py", line 72, in convert_single
+    FileManager.validate_image_path(input_path)
+  File "/home/metin-mert-turan/PycharmProjects/PythonProject2/Image2CAD/utils/file_manager.py", line 41, in validate_image_path
+    raise FileNotFoundError(f"File not found: {filepath}")
+FileNotFoundError: File not found: assets/0996.png
+[2026-02-10 13:44:41] INFO     [img2cad.__init__:44] Using default configuration
+[2026-02-10 13:44:41] ERROR    [img2cad.convert_single:114] Conversion error:
+Traceback (most recent call last):
+  File "/home/metin-mert-turan/PycharmProjects/PythonProject2/Image2CAD/main.py", line 72, in convert_single
+    FileManager.validate_image_path(input_path)
+  File "/home/metin-mert-turan/PycharmProjects/PythonProject2/Image2CAD/utils/file_manager.py", line 41, in validate_image_path
+    raise FileNotFoundError(f"File not found: {filepath}")
+FileNotFoundError: File not found: assets/0996.png
+[2026-02-10 13:48:16] INFO     [img2cad.__init__:27] Varsayılan yapılandırma kullanılıyor.
+[2026-02-10 13:49:42] INFO     [img2cad.__init__:27] Varsayılan yapılandırma kullanılıyor.
+[2026-02-10 14:19:07] INFO     [img2cad.__init__:30] Varsayılan yapılandırma kullanılıyor
+[2026-02-10 14:19:07] ERROR    [img2cad.convert_single:82] Dönüştürme hatası:
+Traceback (most recent call last):
+  File "/home/metin-mert-turan/PycharmProjects/PythonProject2/Image2CAD/main.py", line 76, in convert_single
+    CLICommands.print_stats(stats)
+    ^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: type object 'CLICommands' has no attribute 'print_stats'
+[2026-02-10 14:20:24] INFO     [img2cad.__init__:30] Varsayılan yapılandırma kullanılıyor
+[2026-02-10 14:20:54] INFO     [img2cad.__init__:30] Varsayılan yapılandırma kullanılıyor
