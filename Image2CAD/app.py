@@ -13,7 +13,6 @@ st.set_page_config(
 )
 
 # --- TASARIM (CSS) ---
-# Modern ve sade bir görünüm için özel stiller
 st.markdown("""
     <style>
     .main {
@@ -52,7 +51,7 @@ st.markdown(
     "<p style='text-align: center;'>Görüntüleri saniyeler içinde kesime hazır profesyonel vektörlere dönüştürün.</p>",
     unsafe_allow_html=True)
 
-# Sabit Gelişmiş Ayarlar (PC'ndeki en iyi sonuç veren değerler)
+# Sabit Gelişmiş Ayarlar (Senin en iyi sonuç veren değerlerin)
 FIXED_CONFIG = {
     "resize_max_width": 2500,
     "threshold": 180,
@@ -72,7 +71,7 @@ if uploaded_file is not None:
     with open(input_path, "wb") as f:
         f.write(uploaded_file.getbuffer())
 
-    # Görsel Önizleme (Modern Kart Tasarımı içinde)
+    # Görsel Önizleme
     with st.expander("Yüklenen Resmi Gör", expanded=True):
         st.image(uploaded_file, use_container_width=True)
 
@@ -80,7 +79,7 @@ if uploaded_file is not None:
     if st.button("🚀 DXF DOSYASINI HAZIRLA", use_container_width=True):
         with st.status("Metoolok Motoru Çalışıyor...", expanded=True) as status:
             try:
-                # Arka plandaki profesyonel sınıflar
+                # Arka plandaki sınıflar
                 prep = ImagePreprocessor(FIXED_CONFIG)
                 vect = ImageVectorizer(FIXED_CONFIG)
 
@@ -94,10 +93,9 @@ if uploaded_file is not None:
                 if result["status"] == "success":
                     status.update(label="✅ Çizim Hazır!", state="complete", expanded=False)
                     st.balloons()
-
                     st.success("Çizim başarıyla oluşturuldu.")
 
-                    # İndirme Kartı
+                    # İndirme Butonu
                     with open(output_dxf, "rb") as file:
                         st.download_button(
                             label="📥 DXF DOSYASINI İNDİR",
@@ -107,13 +105,17 @@ if uploaded_file is not None:
                             use_container_width=True
                         )
                 else:
-                    st.error("Bir sorun oluştu. Lütfen resmi kontrol edin.")
+                    # Hata durumunda detayı gösteriyoruz
+                    status.update(label="❌ İşlem Başarısız", state="error")
+                    st.error(f"Hata Detayı: {result.get('message', 'Bilinmeyen bir hata oluştu.')}")
 
             except Exception as e:
-                st.error(f"Hata oluştu: {e}")
+                st.error(f"Sistem Hatası: {e}")
             finally:
+                # Temizlik
                 if os.path.exists(input_path): os.remove(input_path)
-                if os.path.exists("metoolok_output.dxf"): os.remove("metoolok_output.dxf")
+                # DXF'i silmiyoruz ki indirme butonu çalışabilsin, 
+                # ancak bir sonraki döngüde veya script sonunda temizlenebilir.
 
 # --- ALT BÖLÜM: FOOTER ---
 st.markdown("""
