@@ -78,7 +78,8 @@ class ImageVectorizer:
             tree = ET.parse(svg_path)
             root = tree.getroot()
 
-            scale = self._get_scale(root)
+            # scale ve SVG yüksekliğini al — Y ekseni düzeltmesi için ikisi de şart
+            scale, vb_height = self._get_scale_and_height(root)
 
             doc = ezdxf.new("R2010")
             doc.units = ezdxf.units.MM
@@ -89,7 +90,7 @@ class ImageVectorizer:
                 d = elem.get("d", "").strip()
                 if not d:
                     continue
-                subpaths = self._parse_svg_path(d, scale)
+                subpaths = self._parse_svg_path(d, scale, vb_height)
                 for pts in subpaths:
                     if len(pts) >= 2:
                         msp.add_lwpolyline(
@@ -111,20 +112,32 @@ class ImageVectorizer:
             return {"status": "error", "message": f"SVG→DXF dönüşüm hatası: {e}"}
 
     # ------------------------------------------------------------------
-    def _get_scale(self, root) -> float:
+    def _get_scale_and_height(self, root) -> tuple:
+        """SVG viewBox'tan (px_to_mm_scale, viewbox_height_px) döndürür."""
         try:
             vb = root.get("viewBox", "")
             vb_parts = re.split(r"[\s,]+", vb.strip()) if vb else []
             vb_w = float(vb_parts[2]) if len(vb_parts) >= 4 else None
+            vb_h = float(vb_parts[3]) if len(vb_parts) >= 4 else None
 
             w_attr = root.get("width", "")
             w_mm   = self._parse_length_mm(w_attr)
 
             if w_mm and vb_w:
-                return w_mm / vb_w
+                scale = w_mm / vb_w
+            else:
+                scale = 25.4 / 96.0
+
+            # vb_h yoksa height attribute'dan al
+            if vb_h is None:
+                h_attr = root.get("height", "")
+                h_mm   = self._parse_length_mm(h_attr)
+                vb_h   = h_mm / scale if h_mm else 297.0 / scale
+
+            return scale, vb_h
+
         except Exception:
-            pass
-        return 25.4 / 96.0
+            return 25.4 / 96.0, 1052.0  # A4 varsayılan
 
     @staticmethod
     def _parse_length_mm(value: str) -> float | None:
@@ -139,7 +152,7 @@ class ImageVectorizer:
                 "pt": num*25.4/72, "px": num*25.4/96}.get(unit, num*25.4/96)
 
     # ------------------------------------------------------------------
-    def _parse_svg_path(self, d: str, scale: float) -> list:
+    def _parse_svg_path(self, d: str, scale: float, vb_height: float) -> list:
         subpaths  = []
         current   = []
         cx = cy   = 0.0
@@ -147,7 +160,9 @@ class ImageVectorizer:
         last_ctrl = None
 
         def to_dxf(x, y):
-            return (x * scale, -y * scale)  # Y ekseni düzelt
+            # SVG: Y aşağı artar → DXF: Y yukarı artar
+            # vb_height - y ile doğru yönde çeviriyoruz
+            return (x * scale, (vb_height - y) * scale)
 
         def add(x, y):
             current.append(to_dxf(x, y))
