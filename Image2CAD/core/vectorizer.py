@@ -78,8 +78,7 @@ class ImageVectorizer:
             tree = ET.parse(svg_path)
             root = tree.getroot()
 
-            # SVG boyutlarını al — Y ekseni düzeltmesi için şart
-            svg_height_mm, scale = self._get_dimensions(root)
+            scale = self._get_scale(root)
 
             doc = ezdxf.new("R2010")
             doc.units = ezdxf.units.MM
@@ -90,7 +89,7 @@ class ImageVectorizer:
                 d = elem.get("d", "").strip()
                 if not d:
                     continue
-                subpaths = self._parse_svg_path(d, scale, svg_height_mm)
+                subpaths = self._parse_svg_path(d, scale)
                 for pts in subpaths:
                     if len(pts) >= 2:
                         msp.add_lwpolyline(
@@ -112,31 +111,20 @@ class ImageVectorizer:
             return {"status": "error", "message": f"SVG→DXF dönüşüm hatası: {e}"}
 
     # ------------------------------------------------------------------
-    def _get_dimensions(self, root) -> tuple[float, float]:
-        """SVG boyutlarından (height_mm, px_to_mm_scale) döndürür."""
+    def _get_scale(self, root) -> float:
         try:
             vb = root.get("viewBox", "")
             vb_parts = re.split(r"[\s,]+", vb.strip()) if vb else []
             vb_w = float(vb_parts[2]) if len(vb_parts) >= 4 else None
-            vb_h = float(vb_parts[3]) if len(vb_parts) >= 4 else None
 
-            h_attr = root.get("height", "")
-            w_attr = root.get("width",  "")
-            h_mm   = self._parse_length_mm(h_attr)
+            w_attr = root.get("width", "")
             w_mm   = self._parse_length_mm(w_attr)
 
-            if h_mm and vb_h:
-                scale = h_mm / vb_h
-            elif w_mm and vb_w:
-                scale = w_mm / vb_w
-            else:
-                scale = 25.4 / 96.0  # varsayılan 96dpi
-
-            svg_height_mm = vb_h * scale if vb_h else (h_mm or 297.0)
-            return svg_height_mm, scale
-
+            if w_mm and vb_w:
+                return w_mm / vb_w
         except Exception:
-            return 297.0, 25.4 / 96.0
+            pass
+        return 25.4 / 96.0
 
     @staticmethod
     def _parse_length_mm(value: str) -> float | None:
@@ -151,21 +139,15 @@ class ImageVectorizer:
                 "pt": num*25.4/72, "px": num*25.4/96}.get(unit, num*25.4/96)
 
     # ------------------------------------------------------------------
-    def _parse_svg_path(self, d: str, scale: float,
-                        svg_height_mm: float) -> list:
-        """
-        SVG path → DXF polyline noktaları.
-        Y ekseni: SVG aşağı artar, DXF yukarı artar → çevirme zorunlu.
-        """
-        subpaths = []
-        current  = []
-        cx = cy  = 0.0
-        sx = sy  = 0.0
+    def _parse_svg_path(self, d: str, scale: float) -> list:
+        subpaths  = []
+        current   = []
+        cx = cy   = 0.0
+        sx = sy   = 0.0
         last_ctrl = None
 
         def to_dxf(x, y):
-            """SVG piksel → DXF mm, Y ekseni düzelt"""
-            return (x * scale, svg_height_mm - y * scale)
+            return (x * scale, -y * scale)  # Y ekseni düzelt
 
         def add(x, y):
             current.append(to_dxf(x, y))
