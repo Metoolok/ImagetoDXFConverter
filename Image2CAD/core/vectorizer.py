@@ -118,9 +118,3 @@ class ImageVectorizer:
             if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
                 return candidate
         return None
-```
-
-`packages.txt` dosyasına ekle:
-```
-autotrace
-potrace
