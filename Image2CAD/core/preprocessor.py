@@ -1,4 +1,3 @@
-
 import cv2
 import numpy as np
 
@@ -10,56 +9,30 @@ class ImagePreprocessor:
     def process(self, image_path: str) -> np.ndarray:
         cfg = self.config
 
+        # 1. Yükle
         img = self._load(image_path)
+
+        # 2. Boyutlandır — yüksek çözünürlük kalite demek
         img = self._resize(img)
 
+        # 3. Gri tonlama
         if img.ndim == 3:
             img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Bilateral filtre
-        img = cv2.bilateralFilter(img, 9, 75, 75)
+        # 4. Sadece hafif gürültü azaltma — AutoTrace kendi işini yapacak
+        img = cv2.GaussianBlur(img, (3, 3), 0)
 
-        # CLAHE
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        img = clahe.apply(img)
-
-        # Keskinleştirme
-        if cfg.get("sharpen", True):
-            kernel = np.array([[0,-1,0],[-1,5,-1],[0,-1,0]], dtype=np.float32)
-            img = cv2.filter2D(img, -1, kernel)
-
-        # Eşikleme — binary çıktı
-        block = cfg.get("adaptive_block", 15) | 1
-        block = max(block, 3)
-        binary = cv2.adaptiveThreshold(
-            img, 255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV,
-            block,
-            cfg.get("adaptive_c", 3)
-        )
-
-        # Morfoloji
-        ks = cfg.get("morph_kernel_size", 2)
-        if ks > 0:
-            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE,
-                                      np.ones((ks, ks), np.uint8))
-
-        # İnceltme
-        erode = cfg.get("erode_iter", 1)
-        if erode > 0:
-            binary = cv2.erode(binary, np.ones((2, 2), np.uint8), iterations=erode)
-
-        # Kenar boşluğu
-        pad = cfg.get("border_pad", 8)
-        if pad > 0:
-            binary = cv2.copyMakeBorder(binary, pad, pad, pad, pad,
-                                        cv2.BORDER_CONSTANT, value=255)
+        # 5. Kontrast gerdirme — histogram stretch
+        min_val = np.percentile(img, 2)
+        max_val = np.percentile(img, 98)
+        if max_val > min_val:
+            img = np.clip((img - min_val) * 255.0 / (max_val - min_val), 0, 255).astype(np.uint8)
 
         if cfg.get("debug", False):
-            cv2.imwrite("debug_binary.png", binary)
+            cv2.imwrite("debug_output.png", img)
 
-        return binary
+        # Binary DEĞİL — gri görüntü döndür, AutoTrace halleder
+        return img
 
     def _load(self, path: str) -> np.ndarray:
         img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
