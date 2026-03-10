@@ -1,4 +1,3 @@
-
 import cv2
 import os
 import shutil
@@ -17,37 +16,43 @@ class ImageVectorizer:
         self._autotrace = self._find_tool("autotrace")
         self._potrace   = self._find_tool("potrace")
 
-    def convert_to_dxf(self, binary_img, output_dxf: str) -> dict:
+    def convert_to_dxf(self, img, output_dxf: str) -> dict:
         if self._autotrace:
-            return self._convert_autotrace(binary_img, output_dxf)
+            return self._convert_autotrace(img, output_dxf)
         elif self._potrace:
-            return self._convert_potrace(binary_img, output_dxf)
+            return self._convert_potrace(img, output_dxf)
         else:
-            return {"status": "error", "message": "autotrace veya potrace bulunamadı. Kurulum: sudo apt install autotrace"}
+            return {"status": "error", "message": "autotrace veya potrace bulunamadı"}
 
     # ------------------------------------------------------------------
-    # AutoTrace — DXF'e doğrudan çıktı, Y ekseni sorunu yok
-    # ------------------------------------------------------------------
-    def _convert_autotrace(self, binary_img, output_dxf: str) -> dict:
+    def _convert_autotrace(self, img, output_dxf: str) -> dict:
         with tempfile.TemporaryDirectory(prefix="vectorizer_") as tmp:
-            tmp_pnm = os.path.join(tmp, "input.pnm")
+            tmp_png = os.path.join(tmp, "input.png")
 
-            if not cv2.imwrite(tmp_pnm, binary_img):
-                return {"status": "error", "message": "PNM dosyası oluşturulamadı"}
+            # PNG olarak kaydet — AutoTrace PNG'yi en iyi işler
+            if not cv2.imwrite(tmp_png, img):
+                return {"status": "error", "message": "PNG oluşturulamadı"}
 
             out_dir = os.path.dirname(os.path.abspath(output_dxf))
             os.makedirs(out_dir, exist_ok=True)
 
             cmd = [
                 self._autotrace,
-                "--output-format", "dxf",
-                "--output-file",   output_dxf,
-                "--corner-threshold",   str(self.config.get("corner_threshold",  60)),
-                "--error-threshold",    str(self.config.get("error_threshold",   2.0)),
-                "--line-threshold",     str(self.config.get("line_threshold",    1.0)),
-                "--filter-iterations",  str(self.config.get("filter_iterations", 4)),
+                "--output-format",           "dxf",
+                "--output-file",             output_dxf,
+                "--error-threshold",         str(self.config.get("error_threshold",         2.0)),
+                "--line-threshold",          str(self.config.get("line_threshold",          1.0)),
+                "--corner-threshold",        str(self.config.get("corner_threshold",        60)),
+                "--corner-surround",         str(self.config.get("corner_surround",         4)),
+                "--corner-always-threshold", str(self.config.get("corner_always_threshold", 60)),
+                "--filter-iterations",       str(self.config.get("filter_iterations",       4)),
+                "--despeckle-level",         str(self.config.get("despeckle_level",         2)),
+                "--despeckle-tightness",     str(self.config.get("despeckle_tightness",     2.0)),
+                "--tangent-surround",        str(self.config.get("tangent_surround",        3)),
+                "--color-count",             str(self.config.get("color_count",             2)),
+                "--background-color",        "FFFFFF",
                 "--remove-adjacent-corners",
-                tmp_pnm,
+                tmp_png,
             ]
 
             try:
@@ -68,14 +73,17 @@ class ImageVectorizer:
         return {"status": "success", "output": output_dxf}
 
     # ------------------------------------------------------------------
-    # Potrace fallback — autotrace yoksa
-    # ------------------------------------------------------------------
-    def _convert_potrace(self, binary_img, output_dxf: str) -> dict:
+    def _convert_potrace(self, img, output_dxf: str) -> dict:
         with tempfile.TemporaryDirectory(prefix="vectorizer_") as tmp:
             tmp_pbm = os.path.join(tmp, "input.pbm")
 
-            if not cv2.imwrite(tmp_pbm, binary_img):
-                return {"status": "error", "message": "PBM dosyası oluşturulamadı"}
+            if len(img.shape) == 3:
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            _, binary = cv2.threshold(img, 0, 255,
+                                      cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+
+            if not cv2.imwrite(tmp_pbm, binary):
+                return {"status": "error", "message": "PBM oluşturulamadı"}
 
             out_dir = os.path.dirname(os.path.abspath(output_dxf))
             os.makedirs(out_dir, exist_ok=True)
@@ -86,7 +94,6 @@ class ImageVectorizer:
                 "--alphamax",     str(self.config.get("alphamax",     1.0)),
                 "--turdsize",     str(self.config.get("turdsize",     2)),
                 "--opttolerance", str(self.config.get("opttolerance", 0.2)),
-                "--turnpolicy",   self.config.get("turnpolicy", "minority"),
                 "--longcurve",
                 "-o", output_dxf,
             ]
@@ -104,7 +111,7 @@ class ImageVectorizer:
                 return {"status": "error", "message": f"Potrace hatası: {e}"}
 
         if not os.path.exists(output_dxf):
-            return {"status": "error", "message": "DXF dosyası oluşmadı"}
+            return {"status": "error", "message": "DXF oluşmadı"}
 
         return {"status": "success", "output": output_dxf}
 
