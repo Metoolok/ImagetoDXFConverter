@@ -1,136 +1,82 @@
 
 import cv2
-import os
-import shutil
-import subprocess
-import tempfile
+import numpy as np
 
 
-class ImageVectorizer:
-    _SEARCH_PATHS = [
-        "/usr/bin", "/usr/local/bin", "/bin",
-        "/opt/homebrew/bin", "/snap/bin", "/opt/local/bin",
-    ]
-
+class ImagePreprocessor:
     def __init__(self, config: dict):
         self.config = config
-        self._autotrace = self._find_tool("autotrace")
-        self._potrace   = self._find_tool("potrace")
 
-    def convert_to_dxf(self, binary_img, output_dxf: str) -> dict:
-        if self._autotrace:
-            return self._convert_autotrace(binary_img, output_dxf)
-        elif self._potrace:
-            return self._convert_potrace(binary_img, output_dxf)
-        else:
-            return {"status": "error", "message": "autotrace veya potrace bulunamadı"}
+    def process(self, image_path: str) -> np.ndarray:
+        cfg = self.config
 
-    # ------------------------------------------------------------------
-    def _convert_autotrace(self, img, output_dxf: str) -> dict:
-        with tempfile.TemporaryDirectory(prefix="vectorizer_") as tmp:
-            # PNG olarak kaydet — AutoTrace PNG'yi doğrudan işler
-            tmp_png = os.path.join(tmp, "input.png")
-            if not cv2.imwrite(tmp_png, img):
-                return {"status": "error", "message": "PNG dosyası oluşturulamadı"}
+        img = self._load(image_path)
+        img = self._resize(img)
 
-            out_dir = os.path.dirname(os.path.abspath(output_dxf))
-            os.makedirs(out_dir, exist_ok=True)
+        if img.ndim == 3:
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-            cmd = [
-                self._autotrace,
-                "--output-format",        "dxf",
-                "--output-file",          output_dxf,
+        # Bilateral filtre
+        img = cv2.bilateralFilter(img, 9, 75, 75)
 
-                # Eğri kalitesi — web sitesiyle eşleşen değerler
-                "--error-threshold",      str(self.config.get("error_threshold",    2.0)),
-                "--line-threshold",       str(self.config.get("line_threshold",     1.0)),
-                "--corner-threshold",     str(self.config.get("corner_threshold",   60)),
-                "--corner-surround",      str(self.config.get("corner_surround",    4)),
-                "--corner-always-threshold", str(self.config.get("corner_always_threshold", 60)),
+        # CLAHE
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        img = clahe.apply(img)
 
-                # Gürültü temizleme
-                "--filter-iterations",    str(self.config.get("filter_iterations",  4)),
-                "--despeckle-level",      str(self.config.get("despeckle_level",    2)),
-                "--despeckle-tightness",  str(self.config.get("despeckle_tightness", 2.0)),
+        # Keskinleştirme
+        if cfg.get("sharpen", True):
+            kernel = np.array([[0,-1,0],[-1,5,-1],[0,-1,0]], dtype=np.float32)
+            img = cv2.filter2D(img, -1, kernel)
 
-                # Renk / eşikleme
-                "--color-count",          str(self.config.get("color_count",        2)),
-                "--background-color",     "FFFFFF",
+        # Eşikleme — binary çıktı
+        block = cfg.get("adaptive_block", 15) | 1
+        block = max(block, 3)
+        binary = cv2.adaptiveThreshold(
+            img, 255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            block,
+            cfg.get("adaptive_c", 3)
+        )
 
-                "--remove-adjacent-corners",
-                "--tangent-surround",     str(self.config.get("tangent_surround",   3)),
+        # Morfoloji
+        ks = cfg.get("morph_kernel_size", 2)
+        if ks > 0:
+            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE,
+                                      np.ones((ks, ks), np.uint8))
 
-                tmp_png,
-            ]
+        # İnceltme
+        erode = cfg.get("erode_iter", 1)
+        if erode > 0:
+            binary = cv2.erode(binary, np.ones((2, 2), np.uint8), iterations=erode)
 
-            try:
-                proc = subprocess.run(
-                    cmd, capture_output=True, text=True,
-                    timeout=self.config.get("timeout", 120)
-                )
-                if proc.returncode != 0:
-                    return {"status": "error", "message": f"AutoTrace hatası: {proc.stderr.strip()}"}
-            except subprocess.TimeoutExpired:
-                return {"status": "error", "message": "AutoTrace zaman aşımı"}
-            except Exception as e:
-                return {"status": "error", "message": f"AutoTrace hatası: {e}"}
+        # Kenar boşluğu
+        pad = cfg.get("border_pad", 8)
+        if pad > 0:
+            binary = cv2.copyMakeBorder(binary, pad, pad, pad, pad,
+                                        cv2.BORDER_CONSTANT, value=255)
 
-        if not os.path.exists(output_dxf):
-            return {"status": "error", "message": "DXF dosyası oluşmadı"}
+        if cfg.get("debug", False):
+            cv2.imwrite("debug_binary.png", binary)
 
-        return {"status": "success", "output": output_dxf}
+        return binary
 
-    # ------------------------------------------------------------------
-    def _convert_potrace(self, img, output_dxf: str) -> dict:
-        with tempfile.TemporaryDirectory(prefix="vectorizer_") as tmp:
-            tmp_pbm = os.path.join(tmp, "input.pbm")
+    def _load(self, path: str) -> np.ndarray:
+        img = cv2.imread(path, cv2.IMREAD_UNCHANGED)
+        if img is None:
+            raise ValueError(f"Görüntü yüklenemedi: {path}")
+        if img.ndim == 3 and img.shape[2] == 4:
+            alpha = img[:, :, 3:4].astype(float) / 255.0
+            rgb   = img[:, :, :3].astype(float)
+            img   = (rgb * alpha + 255.0 * (1.0 - alpha)).astype(np.uint8)
+        return img
 
-            # Potrace binary ister
-            if len(img.shape) == 3:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            _, binary = cv2.threshold(img, 0, 255,
-                                      cv2.THRESH_BINARY | cv2.THRESH_OTSU)
-
-            if not cv2.imwrite(tmp_pbm, binary):
-                return {"status": "error", "message": "PBM dosyası oluşturulamadı"}
-
-            out_dir = os.path.dirname(os.path.abspath(output_dxf))
-            os.makedirs(out_dir, exist_ok=True)
-
-            cmd = [
-                self._potrace, tmp_pbm,
-                "--backend", "dxf",
-                "--alphamax",     str(self.config.get("alphamax",     1.0)),
-                "--turdsize",     str(self.config.get("turdsize",     2)),
-                "--opttolerance", str(self.config.get("opttolerance", 0.2)),
-                "--longcurve",
-                "-o", output_dxf,
-            ]
-
-            try:
-                proc = subprocess.run(
-                    cmd, capture_output=True, text=True,
-                    timeout=self.config.get("timeout", 120)
-                )
-                if proc.returncode != 0:
-                    return {"status": "error", "message": f"Potrace hatası: {proc.stderr.strip()}"}
-            except subprocess.TimeoutExpired:
-                return {"status": "error", "message": "Potrace zaman aşımı"}
-            except Exception as e:
-                return {"status": "error", "message": f"Potrace hatası: {e}"}
-
-        if not os.path.exists(output_dxf):
-            return {"status": "error", "message": "DXF dosyası oluşmadı"}
-
-        return {"status": "success", "output": output_dxf}
-
-    # ------------------------------------------------------------------
-    def _find_tool(self, name: str) -> str | None:
-        found = shutil.which(name)
-        if found:
-            return found
-        for base in self._SEARCH_PATHS:
-            candidate = os.path.join(base, name)
-            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-                return candidate
-        return None
+    def _resize(self, img: np.ndarray) -> np.ndarray:
+        h, w  = img.shape[:2]
+        max_w = self.config.get("resize_max_width",  3000)
+        max_h = self.config.get("resize_max_height", 3000)
+        scale = min(max_w / w, max_h / h, 1.0)
+        if scale < 1.0:
+            img = cv2.resize(img, (int(w * scale), int(h * scale)),
+                             interpolation=cv2.INTER_AREA)
+        return img
