@@ -21,7 +21,6 @@ class ImageVectorizer:
     def convert_to_dxf(self, binary_img, output_dxf: str) -> dict:
         if not self._potrace:
             return {"status": "error", "message": "Potrace bulunamadı. Kurulum: sudo apt install potrace"}
-
         try:
             import ezdxf
         except ImportError:
@@ -78,8 +77,8 @@ class ImageVectorizer:
             tree = ET.parse(svg_path)
             root = tree.getroot()
 
-            # scale ve SVG yüksekliğini al — Y ekseni düzeltmesi için ikisi de şart
-            scale, vb_height = self._get_scale_and_height(root)
+            # Potrace'in <g transform="..."> içindeki matrix'i oku
+            transform = self._read_group_transform(root)
 
             doc = ezdxf.new("R2010")
             doc.units = ezdxf.units.MM
@@ -90,7 +89,7 @@ class ImageVectorizer:
                 d = elem.get("d", "").strip()
                 if not d:
                     continue
-                subpaths = self._parse_svg_path(d, scale, vb_height)
+                subpaths = self._parse_svg_path(d, transform)
                 for pts in subpaths:
                     if len(pts) >= 2:
                         msp.add_lwpolyline(
@@ -112,60 +111,63 @@ class ImageVectorizer:
             return {"status": "error", "message": f"SVG→DXF dönüşüm hatası: {e}"}
 
     # ------------------------------------------------------------------
-    def _get_scale_and_height(self, root) -> tuple:
-        """SVG viewBox'tan (px_to_mm_scale, viewbox_height_px) döndürür."""
-        try:
-            vb = root.get("viewBox", "")
-            vb_parts = re.split(r"[\s,]+", vb.strip()) if vb else []
-            vb_w = float(vb_parts[2]) if len(vb_parts) >= 4 else None
-            vb_h = float(vb_parts[3]) if len(vb_parts) >= 4 else None
+    def _read_group_transform(self, root) -> dict:
+        """
+        Potrace SVG çıktısındaki <g transform="..."> transform'unu okur.
+        Döndürür: {"tx": float, "ty": float, "sx": float, "sy": float}
 
-            w_attr = root.get("width", "")
-            w_mm   = self._parse_length_mm(w_attr)
+        Potrace tipik çıktı:
+          translate(0, 123.456) scale(0.1, -0.1)
+          ya da
+          scale(1,-1) translate(0,-height)
+        """
+        result = {"tx": 0.0, "ty": 0.0, "sx": 1.0, "sy": 1.0}
 
-            if w_mm and vb_w:
-                scale = w_mm / vb_w
-            else:
-                scale = 25.4 / 96.0
+        for elem in root.iter("{http://www.w3.org/2000/svg}g"):
+            transform_str = elem.get("transform", "")
+            if not transform_str:
+                continue
 
-            # vb_h yoksa height attribute'dan al
-            if vb_h is None:
-                h_attr = root.get("height", "")
-                h_mm   = self._parse_length_mm(h_attr)
-                vb_h   = h_mm / scale if h_mm else 297.0 / scale
+            # translate(tx, ty)
+            m = re.search(r"translate\(\s*([-\d.e]+)\s*[,\s]\s*([-\d.e]+)\s*\)", transform_str)
+            if m:
+                result["tx"] = float(m.group(1))
+                result["ty"] = float(m.group(2))
 
-            return scale, vb_h
+            # scale(sx, sy) veya scale(sx)
+            m = re.search(r"scale\(\s*([-\d.e]+)\s*(?:[,\s]\s*([-\d.e]+))?\s*\)", transform_str)
+            if m:
+                result["sx"] = float(m.group(1))
+                result["sy"] = float(m.group(2)) if m.group(2) else float(m.group(1))
 
-        except Exception:
-            return 25.4 / 96.0, 1052.0  # A4 varsayılan
+            break  # ilk <g> yeterli
 
-    @staticmethod
-    def _parse_length_mm(value: str) -> float | None:
-        if not value:
-            return None
-        m = re.match(r"([\d.]+)\s*(mm|cm|in|pt|px)?", value.strip())
-        if not m:
-            return None
-        num  = float(m.group(1))
-        unit = (m.group(2) or "px").lower()
-        return {"mm": num, "cm": num*10, "in": num*25.4,
-                "pt": num*25.4/72, "px": num*25.4/96}.get(unit, num*25.4/96)
+        return result
+
+    def _apply_transform(self, x: float, y: float, t: dict) -> tuple:
+        """
+        SVG transform'u uygular: önce scale, sonra translate.
+        Sonucu mm'ye çevirir (Potrace pt cinsinden çalışır, 1pt = 25.4/72 mm).
+        """
+        # Potrace koordinatları pt (point) cinsinden
+        # scale zaten pt→px dönüşümünü içeriyor
+        px = x * t["sx"] + t["tx"]
+        py = y * t["sy"] + t["ty"]
+
+        # pt → mm (1 pt = 25.4/72 mm)
+        mm_per_pt = 25.4 / 72.0
+        return (px * mm_per_pt, py * mm_per_pt)
 
     # ------------------------------------------------------------------
-    def _parse_svg_path(self, d: str, scale: float, vb_height: float) -> list:
+    def _parse_svg_path(self, d: str, transform: dict) -> list:
         subpaths  = []
         current   = []
         cx = cy   = 0.0
         sx = sy   = 0.0
         last_ctrl = None
 
-        def to_dxf(x, y):
-            # SVG: Y aşağı artar → DXF: Y yukarı artar
-            # vb_height - y ile doğru yönde çeviriyoruz
-            return (x * scale, (vb_height - y) * scale)
-
         def add(x, y):
-            current.append(to_dxf(x, y))
+            current.append(self._apply_transform(x, y, transform))
 
         def cubic_bezier(p0, p1, p2, p3, steps=16):
             for k in range(1, steps + 1):
