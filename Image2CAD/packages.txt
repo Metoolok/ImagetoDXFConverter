@@ -1,0 +1,2 @@
+autotrace
+potrace
