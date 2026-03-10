@@ -1,4 +1,3 @@
-
 import cv2
 import os
 import shutil
@@ -16,6 +15,7 @@ class ImageVectorizer:
         self.config = config
         self._potrace  = self._find_tool("potrace")
         self._inkscape = self._find_tool("inkscape")
+        self._inkscape_version = self._get_inkscape_version()
 
     def convert_to_dxf(self, binary_img, output_dxf: str) -> dict:
         if not self._potrace:
@@ -44,13 +44,14 @@ class ImageVectorizer:
             if result["status"] == "error":
                 return result
 
-            # 2. SVG → DXF
-            os.makedirs(os.path.dirname(os.path.abspath(output_dxf)), exist_ok=True)
-            result = self._run([
-                self._inkscape, tmp_svg,
-                "--export-type=dxf",
-                "--export-filename", output_dxf,
-            ], "Inkscape")
+            if not os.path.exists(tmp_svg):
+                return {"status": "error", "message": "Potrace SVG oluşturmadı"}
+
+            # 2. SVG → DXF (sürüme göre uygun komut)
+            out_dir = os.path.dirname(os.path.abspath(output_dxf))
+            os.makedirs(out_dir, exist_ok=True)
+
+            result = self._inkscape_to_dxf(tmp_svg, output_dxf)
             if result["status"] == "error":
                 return result
 
@@ -58,6 +59,54 @@ class ImageVectorizer:
             return {"status": "error", "message": "DXF dosyası oluşmadı"}
 
         return {"status": "success", "output": output_dxf}
+
+    # ------------------------------------------------------------------
+    def _inkscape_to_dxf(self, svg_path: str, dxf_path: str) -> dict:
+        ver = self._inkscape_version
+
+        # Inkscape 1.0+ (yeni API)
+        if ver >= (1, 0):
+            cmd = [
+                self._inkscape, svg_path,
+                "--export-type=dxf",
+                f"--export-filename={dxf_path}",
+            ]
+            result = self._run(cmd, "Inkscape")
+            if result["status"] == "success" and os.path.exists(dxf_path):
+                return result
+
+            # 1.x'te bazen --actions daha güvenilir
+            cmd2 = [
+                self._inkscape,
+                f"--actions=file-open:{svg_path};export-type:dxf;export-filename:{dxf_path};export-do",
+            ]
+            return self._run(cmd2, "Inkscape (actions)")
+
+        # Inkscape 0.9x (eski API)
+        else:
+            cmd = [
+                self._inkscape,
+                f"--file={svg_path}",
+                f"--export-dxf={dxf_path}",
+            ]
+            return self._run(cmd, "Inkscape (legacy)")
+
+    # ------------------------------------------------------------------
+    def _get_inkscape_version(self) -> tuple:
+        if not self._inkscape:
+            return (0, 0)
+        try:
+            proc = subprocess.run(
+                [self._inkscape, "--version"],
+                capture_output=True, text=True, timeout=10
+            )
+            import re
+            m = re.search(r"(\d+)\.(\d+)", proc.stdout + proc.stderr)
+            if m:
+                return (int(m.group(1)), int(m.group(2)))
+        except Exception:
+            pass
+        return (1, 0)  # bilinmiyorsa yeni API dene
 
     def _run(self, cmd: list, tool_name: str) -> dict:
         try:
@@ -67,7 +116,7 @@ class ImageVectorizer:
             )
             if proc.returncode != 0:
                 detail = proc.stderr.strip() or proc.stdout.strip()
-                return {"status": "error", "message": f"{tool_name} hatası: {detail}"}
+                return {"status": "error", "message": f"{tool_name} hatası (kod {proc.returncode}): {detail}"}
             return {"status": "success"}
         except subprocess.TimeoutExpired:
             return {"status": "error", "message": f"{tool_name} zaman aşımı"}
